@@ -8,18 +8,27 @@ W = M*9.81;
 Iz = 1000;
 lf = 1.3;
 lr = 1.2;
+tf = 1.3;
+tr = 1.2;
+
+reff = 0.35;
+rl = 0.3;
+Iww = 1;
+
+Iyyf = 10;
+Iyyr = 10;
 
 L = lf+lr;
 
 h = 0.25;
 eps = 1e-4;
 
-acc_sl = 20000;
+acc_sl = 100;
 brake_sl = 10000;
 
 slips = linspace(0, 1, 20).';
 
-Bf = 12;
+Bf = 8;
 Cf = 1.5;
 Df = 1.2;
 Ef = 0.3;
@@ -28,7 +37,7 @@ Ef = 0.3;
 Caf = (max_f/slips(ind_f));
 Kaf = W*lr/L/Caf;
 
-Br = 12;
+Br = 8;
 Cr = 1.5;
 Dr = 1.3;
 Er = 0.3;
@@ -44,12 +53,12 @@ fs = 50;
 Ts = 1/fs;
 N = 20;
 
-ns = 8;
-nu = 2;
+ns = 15;
+nu = 5;
 
-Q = 125*diag([1, 1, 1, 0.3, 0, 0, 0, 0]);
+Q = 250*diag([1, 1, 1, 0.3, zeros(1, ns-4)]);
 QN = Q;
-R = diag([2, 1]);
+R = diag([ones(1, 4), 0.1]);
 
 QCell = repmat({Q}, 1, N);
 BigQ = blkdiag(QCell{:});
@@ -60,40 +69,51 @@ BigR = blkdiag(RCell{:});
 y = SX.sym('y', ns);
 u = SX.sym('u', nu);
 
+% Fx = acc_sl*y(8) - W*0.03 - 0.5*1.2*1*0.3*y(4)*y(4);
 
-thrust_fcn = fit_engine_data("gaussian", 5);
+alphafl = y(7) - atan(y(5) + lf*y(6)/y(4));
+alphafr = y(7) - atan(y(5) + lf*y(6)/y(4));
+alpharl = -atan(y(5) - lr*y(6)/y(4));
+alpharr = -atan(y(5) - lr*y(6)/y(4));
 
-% speeds = linspace(5, 110, 59);
-% throttles = linspace(-1, 1, 59);
-% 
-% [speeds, throttles] = meshgrid(speeds, throttles);
-% thrusts = full(thrust_fcn(speeds, throttles));
-% 
-% contourf(speeds, throttles, thrusts, 50);
-% colorbar;
+Vsxf = y(4) * cos(y(15)) + (y(5) + y(6)*lf) * sin(y(15));
+% Vsxfr = y(4) * cos(y(15)) + (y(5) + y(6)*lf) * sin(y(15));
 
-% Fx = thrust_fcn(y(4), y(8));
-Fx = acc_sl*y(8) - W*0.03 - 0.5*1.2*1*0.3*y(4)*y(4);
+kappafl = (y(7)*reff - Vsxf)/Vsxf;
+kappafr = (y(8)*reff - Vsxf)/Vsxf;
+kapparl = (y(9)*reff - y(4))/y(4);
+kapparr = (y(10)*reff - y(4))/y(4);
 
-w_tr = Fx*h/L;
+Fzf = M*9.81*lr/L;
+Fzr = M*9.81*lf/L;
 
-Fzf = M*9.81*lr/L - w_tr;
-Fzr = M*9.81*lf/L + w_tr;
+Fyfl = pacejka(Fzf/2, Bf, Cf, Df, Ef, alphafl);
+Fyfr = pacejka(Fzf/2, Br, Cr, Dr, Er, alphafr);
+Fyrl = pacejka(Fzr/2, Bf, Cf, Df, Ef, alpharl);
+Fyrr = pacejka(Fzr/2, Br, Cr, Dr, Er, alpharr);
 
-alphaf = y(7) - atan(y(5) + lf*y(6)/y(4));
-alphar = -atan(y(5) - lr*y(6)/y(4));
+Fxfl = pacejka(Fzf/2, Bf, Cf, Df, Ef, kappafl);
+Fxfr = pacejka(Fzf/2, Br, Cr, Dr, Er, kappafr);
+Fxrl = pacejka(Fzr/2, Bf, Cf, Df, Ef, kapparl);
+Fxrr = pacejka(Fzr/2, Br, Cr, Dr, Er, kapparr);
 
-Ffy = pacejka(Fzf, Bf, Cf, Df, Ef, alphaf);
-Fry = pacejka(Fzr, Br, Cr, Dr, Er, alphar);
+% w_tr = (Ffx+Frx)*h/L;
 
-ode_rhs = [y(4)*cos(y(3)) - y(5)*sin(y(3));
-           y(4)*sin(y(3)) + y(5)*cos(y(3));
-           y(6);
-           1/M*(Fx-Ffy*sin(y(7))+M*y(5)*y(6));
-           1/M*(Fry+Ffy*cos(y(7))-M*y(4)*y(6));
-           1/Iz*(Ffy*cos(y(7))*lf-Fry*lr);
-           u(1);
-           u(2)];
+ode_rhs = [y(4)*cos(y(3)) - y(5)*sin(y(3)); % 1 Global X
+           y(4)*sin(y(3)) + y(5)*cos(y(3)); % 2 Global Y
+           y(6); % 3 Global yaw
+           1/M*(Fxfl*cos(y(15))+Fxfr*cos(y(15))+Fxrl+Fxrr-Fyfl*sin(y(15))-Fyfr*sin(y(15))+M*y(5)*y(6)); % 4 Vx
+           1/M*(Fyrl+Fyrr+Fyfl*cos(y(15))+Fyfr*cos(y(15))+Fxfl*sin(y(15))+Fxfr*sin(y(15))-M*y(4)*y(6)); % 5 Vy
+           1/Iz*(Fyfl*cos(y(15))*lf+Fyfr*cos(y(15))-Fyrl*lr-Fyrr*lr+Fxfl*sin(y(15))*lf+Fxfr*sin(y(15))); % 6 Psi_dot
+           (acc_sl*y(12)-Fxfl*rl)/Iww; % 7 w_fl
+           (acc_sl*y(13)-Fxfr*rl)/Iww; % 8 w_fr
+           (acc_sl*y(14)-Fxrl*rl)/Iww; % 9 w_rl
+           (acc_sl*y(15)-Fxrr*rl)/Iww; % 10 w_rr
+           u(1); % 11 t_fl
+           u(2); % 12 t_fr
+           u(3); % 13 t_rl
+           u(4); % 14 t_rr
+           u(5)]; % 15 steering
 
 f_ode = Function('f', {y, u}, {ode_rhs}, {'y', 'u'}, {'f'});
 
@@ -120,13 +140,13 @@ nlp.p = [Y0; vec(Yr)];
 nlp.g = [Y(:, 1) - Y0; 
          vec(Y(:, 2:end))-vec(Y_next)];
 
-ymax = [Inf, Inf, Inf, 100, Inf, Inf, deg2rad(35), 1].';
-ymin = [-Inf, -Inf, -Inf, 1, -Inf, -Inf, -deg2rad(35), -1].';
+ymax = [Inf, Inf, Inf, 100, Inf, Inf, Inf, Inf, Inf, Inf, 1, 1, 1, 1, deg2rad(35)].';
+ymin = [-Inf, -Inf, -Inf, 1, -Inf, -Inf, 0.1, 0.1, 0.1, 0.1, -1, -1, -1, -1, -deg2rad(35)].';
 
 Ymax = repmat(ymax, 1, N+1);
 Ymin = repmat(ymin, 1, N+1);
 
-umax = [deg2rad(35)/4*3, 2].';
+umax = [0.2, 0.2, 0.2, 0.2, deg2rad(10)].';
 umin = -umax;
 
 Umax = repmat(umax, 1, N);
@@ -144,11 +164,13 @@ ipopt_opts.ipopt.tol = 1e-2;
 ipopt_opts.ipopt.acceptable_tol = 1e-2;
 ipopt_opts.ipopt.linear_solver = 'ma57';
 % ipopt_opts.ipopt.hessian_approximation = 'limited-memory';
-ipopt_opts.ipopt.max_iter = 100;
+% ipopt_opts.ipopt.max_iter = 100;
 
 solver = nlpsol('solver', 'ipopt', nlp, ipopt_opts);
 
 ref_traj = berlin_2018(Ts);
+ref_traj = [ref_traj; zeros(ns-8, size(ref_traj, 2))];
+ref_traj = ref_traj(:, 1:50);
 
 bound1 = readmatrix('./global_racetrajectory_optimization/bound1.csv');
 bound2 = readmatrix('./global_racetrajectory_optimization/bound2.csv');
@@ -161,10 +183,11 @@ refline = readmatrix('./global_racetrajectory_optimization/refline.csv');
 % plot(bound2(:, 1), bound2(:, 2), 'Color','black');
 
 Y0_num = ref_traj(:, 1);
+Y0_num(7:10) = Y0_num(4)/reff;
 
 num_pts = size(ref_traj, 2);
 
-sol = solver('x0', zeros(2*N+ns*(N+1), 1), ...
+sol = solver('x0', zeros(nu*N+ns*(N+1), 1), ...
       'p', [Y0_num; reshape(ref_traj(:, 1:N), [], 1)], ...
       'ubx', ubx, 'lbx', lbx, 'ubg', ubg, 'lbg', lbg);
 
@@ -191,9 +214,9 @@ while i+N-1 < num_pts
     Yopt = reshape(sol(1:(N+1)*ns), ns, []);
     Uopt = reshape(sol((N+1)*ns+1:end), nu, []);
 
-    control_history(:, j) = [Yopt(7:8, 1); Uopt(1:2, 1)];
+    control_history(:, j) = [Yopt(11:ns, 1); Uopt(1:nu, 1)];
 
-    Y0_num = full(fd_ode(Y0_num, Uopt(1:2)));
+    Y0_num = full(fd_ode(Y0_num, Uopt(1:nu)));
 
     i = find_closest_index(Y0_num(1), Y0_num(2), ref_traj(1:2, :).')
 
